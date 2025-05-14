@@ -1,12 +1,8 @@
-// Import necessary libraries
 import com.qualcomm.robotcore.hardware.DcMotor;
-import com.qualcomm.robotcore.hardware.IMU;
-import com.qualcomm.robotcore.hardware.Gyroscope;
 import com.qualcomm.robotcore.hardware.Gamepad;
-import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.BNO055IMU;
-import com.qualcomm.robotcore.hardware.Gyroscope;
+import com.qualcomm.robotcore.hardware.BNO055IMU.Parameters;
 
 public class MecanumDriveOpMode extends OpMode {
     // Declare motors and IMU sensor
@@ -15,6 +11,11 @@ public class MecanumDriveOpMode extends OpMode {
 
     // Initialize the IMU heading variable
     private double robotHeading;
+    private double lastX = 0, lastY = 0;
+
+    // PID variables for rotation control
+    private double kP = 0.1, kI = 0.01, kD = 0.01;
+    private double previousError = 0, integral = 0;
 
     @Override
     public void init() {
@@ -32,7 +33,7 @@ public class MecanumDriveOpMode extends OpMode {
 
         // Initialize IMU (Gyroscope)
         imu = hardwareMap.get(BNO055IMU.class, "imu");
-        BNO055IMU.Parameters parameters = new BNO055IMU.Parameters();
+        Parameters parameters = new Parameters();
         imu.initialize(parameters);
 
         // Initialize heading
@@ -49,17 +50,38 @@ public class MecanumDriveOpMode extends OpMode {
         double x = gamepad1.left_stick_x;
         double rotation = gamepad1.right_stick_x;
 
-        // Calculate robot movement with field-centric control
-        double fieldCentricX = x * Math.cos(robotHeading) - y * Math.sin(robotHeading);
-        double fieldCentricY = x * Math.sin(robotHeading) + y * Math.cos(robotHeading);
+        // Apply dead zone threshold for smoother control
+        double deadZone = 0.05;  // Adjust as needed
+        if (Math.abs(x) < deadZone) x = 0;
+        if (Math.abs(y) < deadZone) y = 0;
+        if (Math.abs(rotation) < deadZone) rotation = 0;
+
+        // Apply exponential curve to joystick input for smoother control
+        double curveFactor = 2.0; // Higher values give more sensitivity at higher speeds
+        x = Math.pow(x, curveFactor);
+        y = Math.pow(y, curveFactor);
+
+        // Apply smoothing to joystick input
+        double smoothingFactor = 0.1;  // Adjust for desired smoothness
+        double smoothX = (lastX * (1 - smoothingFactor)) + (x * smoothingFactor);
+        double smoothY = (lastY * (1 - smoothingFactor)) + (y * smoothingFactor);
+        lastX = smoothX;
+        lastY = smoothY;
+
+        // Field-Centric Mecanum Drive
+        double fieldCentricX = smoothX * Math.cos(robotHeading) - smoothY * Math.sin(robotHeading);
+        double fieldCentricY = smoothX * Math.sin(robotHeading) + smoothY * Math.cos(robotHeading);
+
+        // PID correction for rotation
+        double rotationCorrection = getPIDCorrection(rotation);
 
         // Set power to the motors
-        double frontLeftPower = fieldCentricY + fieldCentricX + rotation;
-        double frontRightPower = fieldCentricY - fieldCentricX - rotation;
-        double backLeftPower = fieldCentricY - fieldCentricX + rotation;
-        double backRightPower = fieldCentricY + fieldCentricX - rotation;
+        double frontLeftPower = fieldCentricY + fieldCentricX + rotationCorrection;
+        double frontRightPower = fieldCentricY - fieldCentricX - rotationCorrection;
+        double backLeftPower = fieldCentricY - fieldCentricX + rotationCorrection;
+        double backRightPower = fieldCentricY + fieldCentricX - rotationCorrection;
 
-        // Normalize power values to ensure they stay within -1 to 1
+        // Normalize motor power values to ensure they stay within -1 to 1
         double max = Math.max(Math.abs(frontLeftPower), Math.max(Math.abs(frontRightPower),
                 Math.max(Math.abs(backLeftPower), Math.abs(backRightPower))));
         if (max > 1.0) {
@@ -74,5 +96,15 @@ public class MecanumDriveOpMode extends OpMode {
         frontRight.setPower(frontRightPower);
         backLeft.setPower(backLeftPower);
         backRight.setPower(backRightPower);
+    }
+
+    // PID controller function for heading correction
+    public double getPIDCorrection(double targetHeading) {
+        double error = targetHeading - robotHeading;
+        integral += error;
+        double derivative = error - previousError;
+        double correction = kP * error + kI * integral + kD * derivative;
+        previousError = error;
+        return correction;
     }
 }
