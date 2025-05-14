@@ -1,1 +1,78 @@
-#
+// Import necessary libraries
+import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.IMU;
+import com.qualcomm.robotcore.hardware.Gyroscope;
+import com.qualcomm.robotcore.hardware.Gamepad;
+import com.qualcomm.robotcore.eventloop.opmode.OpMode;
+import com.qualcomm.robotcore.hardware.HardwareMap;
+import com.qualcomm.robotcore.hardware.BNO055IMU;
+import com.qualcomm.robotcore.hardware.Gyroscope;
+
+public class MecanumDriveOpMode extends OpMode {
+    // Declare motors and IMU sensor
+    private DcMotor frontLeft, frontRight, backLeft, backRight;
+    private BNO055IMU imu;
+
+    // Initialize the IMU heading variable
+    private double robotHeading;
+
+    @Override
+    public void init() {
+        // Initialize motors
+        frontLeft = hardwareMap.get(DcMotor.class, "front_left");
+        frontRight = hardwareMap.get(DcMotor.class, "front_right");
+        backLeft = hardwareMap.get(DcMotor.class, "back_left");
+        backRight = hardwareMap.get(DcMotor.class, "back_right");
+
+        // Set motor directions
+        frontLeft.setDirection(DcMotor.Direction.FORWARD);
+        frontRight.setDirection(DcMotor.Direction.REVERSE);
+        backLeft.setDirection(DcMotor.Direction.FORWARD);
+        backRight.setDirection(DcMotor.Direction.REVERSE);
+
+        // Initialize IMU (Gyroscope)
+        imu = hardwareMap.get(BNO055IMU.class, "imu");
+        BNO055IMU.Parameters parameters = new BNO055IMU.Parameters();
+        imu.initialize(parameters);
+
+        // Initialize heading
+        robotHeading = 0.0;
+    }
+
+    @Override
+    public void loop() {
+        // Update the robot's heading from the IMU
+        robotHeading = imu.getAngularOrientation().firstAngle;
+
+        // Get joystick input from the gamepad
+        double y = -gamepad1.left_stick_y;  // Invert the y-axis for intuitive control
+        double x = gamepad1.left_stick_x;
+        double rotation = gamepad1.right_stick_x;
+
+        // Calculate robot movement with field-centric control
+        double fieldCentricX = x * Math.cos(robotHeading) - y * Math.sin(robotHeading);
+        double fieldCentricY = x * Math.sin(robotHeading) + y * Math.cos(robotHeading);
+
+        // Set power to the motors
+        double frontLeftPower = fieldCentricY + fieldCentricX + rotation;
+        double frontRightPower = fieldCentricY - fieldCentricX - rotation;
+        double backLeftPower = fieldCentricY - fieldCentricX + rotation;
+        double backRightPower = fieldCentricY + fieldCentricX - rotation;
+
+        // Normalize power values to ensure they stay within -1 to 1
+        double max = Math.max(Math.abs(frontLeftPower), Math.max(Math.abs(frontRightPower),
+                Math.max(Math.abs(backLeftPower), Math.abs(backRightPower))));
+        if (max > 1.0) {
+            frontLeftPower /= max;
+            frontRightPower /= max;
+            backLeftPower /= max;
+            backRightPower /= max;
+        }
+
+        // Apply power to the motors
+        frontLeft.setPower(frontLeftPower);
+        frontRight.setPower(frontRightPower);
+        backLeft.setPower(backLeftPower);
+        backRight.setPower(backRightPower);
+    }
+}
