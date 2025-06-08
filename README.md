@@ -14,4 +14,5 @@ PedroPathing Related Files and links:<br/>
 
 This is also website that is filled with numerous coding commands, so you don't have to mess around and write everything manually:<br/> 
 
+  https://docs.dairy.foundation/introduction<br/> 
   https://nextftc.dev/
