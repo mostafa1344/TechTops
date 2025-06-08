@@ -1,100 +1,308 @@
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
+import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.BNO055IMU;
 import com.qualcomm.robotcore.hardware.BNO055IMU.Parameters;
+import com.qualcomm.robotcore.util.ElapsedTime;
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.AxesOrder;
+import org.firstinspires.ftc.robotcore.external.navigation.AxesReference;
 
-public class MecanumDriveOpMode extends OpMode {
+@TeleOp(name = "Mecanum Teleop driving with PID and acc (Edit to optmize)", group = "TeleOp")
+public class ImprovedMecanumDriveOpMode extends OpMode {
+    // Hardware components
     private DcMotor frontLeft, frontRight, backLeft, backRight;
     private BNO055IMU imu;
-    private double robotHeading;
-
-    private double lastX = 0, lastY = 0;
+    
+    // Drive control variables
+    private double robotHeading = 0.0;
+    private double headingOffset = 0.0;
+    private boolean fieldCentricMode = true;
+    
+    // Input smoothing
+    private double lastX = 0.0, lastY = 0.0, lastRotation = 0.0;
+    private final double SMOOTHING_FACTOR = 0.15; // Lower = smoother but less responsive
+    
+    // Drive settings
+    private final double DEAD_ZONE = 0.08;
+    private final double CURVE_FACTOR = 1.8; // Exponential curve for fine control
+    private final double ROTATION_SCALE = 0.7;
+    private final double MAX_DRIVE_SPEED = 1.0;
+    private final double PRECISION_MODE_SCALE = 0.4;
+    
+    // Timing
+    private ElapsedTime runtime = new ElapsedTime();
+    private double lastLoopTime = 0.0;
+    
+    // State tracking
+    private boolean precisionMode = false;
+    private boolean lastDpadUp = false;
+    private boolean lastDpadDown = false;
 
     @Override
     public void init() {
-        // Initialize motors
-        frontLeft = hardwareMap.get(DcMotor.class, "front_left");
-        frontRight = hardwareMap.get(DcMotor.class, "front_right");
-        backLeft = hardwareMap.get(DcMotor.class, "back_left");
-        backRight = hardwareMap.get(DcMotor.class, "back_right");
+        initializeHardware();
+        initializeIMU();
+        
+        telemetry.addData("Status", "Initialized - Ready to start");
+        telemetry.addData("Field Centric", fieldCentricMode ? "ON" : "OFF");
+        telemetry.update();
+    }
 
+    private void initializeHardware() {
+        // Initialize motors with error checking
+        try {
+            frontLeft = hardwareMap.get(DcMotor.class, "front_left");
+            frontRight = hardwareMap.get(DcMotor.class, "front_right");
+            backLeft = hardwareMap.get(DcMotor.class, "back_left");
+            backRight = hardwareMap.get(DcMotor.class, "back_right");
+        } catch (Exception e) {
+            telemetry.addData("ERROR", "Failed to initialize motors: " + e.getMessage());
+            telemetry.update();
+            return;
+        }
+
+        // Set motor directions (adjust based on your robot's wiring)
         frontLeft.setDirection(DcMotor.Direction.FORWARD);
         frontRight.setDirection(DcMotor.Direction.REVERSE);
         backLeft.setDirection(DcMotor.Direction.FORWARD);
         backRight.setDirection(DcMotor.Direction.REVERSE);
 
-        // Initialize IMU with correct settings
-        imu = hardwareMap.get(BNO055IMU.class, "imu");
-        Parameters parameters = new Parameters();
-        parameters.angleUnit = BNO055IMU.AngleUnit.DEGREES;
-        parameters.mode = BNO055IMU.SensorMode.IMU;
-        parameters.loggingEnabled = false;
-        imu.initialize(parameters);
+        // Set zero power behavior
+        frontLeft.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        frontRight.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        backLeft.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        backRight.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+
+        // Reset encoders (optional - useful for debugging)
+        resetEncoders();
+    }
+
+    private void initializeIMU() {
+        try {
+            imu = hardwareMap.get(BNO055IMU.class, "imu");
+            Parameters parameters = new Parameters();
+            parameters.angleUnit = BNO055IMU.AngleUnit.RADIANS;
+            parameters.accelUnit = BNO055IMU.AccelUnit.METERS_PERSEC_PERSEC;
+            parameters.calibrationDataFile = "BNO055IMUCalibration.json";
+            parameters.loggingEnabled = false;
+            parameters.loggingTag = "IMU";
+            
+            imu.initialize(parameters);
+            
+            // Wait for IMU to calibrate
+            while (!isStopRequested() && !imu.isGyroCalibrated()) {
+                telemetry.addData("Status", "Calibrating IMU...");
+                telemetry.update();
+                sleep(50);
+            }
+            
+        } catch (Exception e) {
+            telemetry.addData("ERROR", "Failed to initialize IMU: " + e.getMessage());
+            telemetry.update();
+        }
+    }
+
+    private void resetEncoders() {
+        frontLeft.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        frontRight.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        backLeft.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        backRight.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+
+        frontLeft.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        frontRight.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        backLeft.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        backRight.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
     }
 
     @Override
     public void loop() {
-        // Get robot heading in radians
-        robotHeading = Math.toRadians(imu.getAngularOrientation().firstAngle);
+        double currentTime = runtime.seconds();
+        double deltaTime = currentTime - lastLoopTime;
+        lastLoopTime = currentTime;
 
-        // Get joystick inputs
-        double y = -gamepad1.left_stick_y;
-        double x = gamepad1.left_stick_x;
-        double rotation = gamepad1.right_stick_x;
+        handleModeToggles();
+        updateRobotHeading();
+        
+        // Get and process joystick inputs
+        DriveInputs inputs = getProcessedInputs();
+        
+        // Calculate motor powers
+        MotorPowers powers = calculateMotorPowers(inputs);
+        
+        // Apply speed scaling
+        powers.scale(precisionMode ? PRECISION_MODE_SCALE : MAX_DRIVE_SPEED);
+        
+        // Set motor powers
+        setMotorPowers(powers);
+        
+        // Update telemetry
+        updateTelemetry(inputs, powers, deltaTime);
+    }
 
-        // Deadzone
-        double deadZone = 0.05;
-        if (Math.abs(x) < deadZone) x = 0;
-        if (Math.abs(y) < deadZone) y = 0;
-        if (Math.abs(rotation) < deadZone) rotation = 0;
+    private void handleModeToggles() {
+        // Toggle field-centric mode with dpad up
+        if (gamepad1.dpad_up && !lastDpadUp) {
+            fieldCentricMode = !fieldCentricMode;
+        }
+        lastDpadUp = gamepad1.dpad_up;
 
-        // Apply input curve
-        double curveFactor = 2.0;
-        x = Math.signum(x) * Math.pow(Math.abs(x), curveFactor);
-        y = Math.signum(y) * Math.pow(Math.abs(y), curveFactor);
+        // Reset heading with dpad down
+        if (gamepad1.dpad_down && !lastDpadDown) {
+            resetHeading();
+        }
+        lastDpadDown = gamepad1.dpad_down;
 
-        // Smooth input
-        double smoothingFactor = 0.25;
-        double smoothX = lastX * (1 - smoothingFactor) + x * smoothingFactor;
-        double smoothY = lastY * (1 - smoothingFactor) + y * smoothingFactor;
+        // Precision mode with right bumper
+        precisionMode = gamepad1.right_bumper;
+    }
+
+    private void updateRobotHeading() {
+        if (imu != null) {
+            robotHeading = imu.getAngularOrientation(AxesReference.INTRINSIC, 
+                           AxesOrder.ZYX, AngleUnit.RADIANS).firstAngle - headingOffset;
+        }
+    }
+
+    private void resetHeading() {
+        if (imu != null) {
+            headingOffset = imu.getAngularOrientation(AxesReference.INTRINSIC, 
+                           AxesOrder.ZYX, AngleUnit.RADIANS).firstAngle;
+            robotHeading = 0.0;
+        }
+    }
+
+    private DriveInputs getProcessedInputs() {
+        // Get raw joystick inputs
+        double rawY = -gamepad1.left_stick_y;  // Forward/backward
+        double rawX = gamepad1.left_stick_x;   // Left/right
+        double rawRotation = gamepad1.right_stick_x; // Rotation
+
+        // Apply deadzone
+        double x = Math.abs(rawX) > DEAD_ZONE ? rawX : 0.0;
+        double y = Math.abs(rawY) > DEAD_ZONE ? rawY : 0.0;
+        double rotation = Math.abs(rawRotation) > DEAD_ZONE ? rawRotation : 0.0;
+
+        // Apply exponential curve for fine control
+        x = Math.signum(x) * Math.pow(Math.abs(x), CURVE_FACTOR);
+        y = Math.signum(y) * Math.pow(Math.abs(y), CURVE_FACTOR);
+        rotation = Math.signum(rotation) * Math.pow(Math.abs(rotation), CURVE_FACTOR);
+
+        // Apply input smoothing
+        double smoothX = lastX + (x - lastX) * SMOOTHING_FACTOR;
+        double smoothY = lastY + (y - lastY) * SMOOTHING_FACTOR;
+        double smoothRotation = lastRotation + (rotation - lastRotation) * SMOOTHING_FACTOR;
+
+        // Update last values
         lastX = smoothX;
         lastY = smoothY;
+        lastRotation = smoothRotation;
 
-        // Field-centric transform
-        double fieldCentricX = smoothX * Math.cos(robotHeading) - smoothY * Math.sin(robotHeading);
-        double fieldCentricY = smoothX * Math.sin(robotHeading) + smoothY * Math.cos(robotHeading);
+        return new DriveInputs(smoothX, smoothY, smoothRotation);
+    }
 
-        // Rotation directly scaled
-        double rotationScaled = rotation * 0.6;
+    private MotorPowers calculateMotorPowers(DriveInputs inputs) {
+        double x = inputs.x;
+        double y = inputs.y;
+        double rotation = inputs.rotation * ROTATION_SCALE;
 
-        // Mecanum drive calculations
-        double frontLeftPower = fieldCentricY + fieldCentricX + rotationScaled;
-        double frontRightPower = fieldCentricY - fieldCentricX - rotationScaled;
-        double backLeftPower = fieldCentricY - fieldCentricX + rotationScaled;
-        double backRightPower = fieldCentricY + fieldCentricX - rotationScaled;
-
-        // Normalize if needed
-        double max = Math.max(Math.abs(frontLeftPower), Math.max(Math.abs(frontRightPower),
-                Math.max(Math.abs(backLeftPower), Math.abs(backRightPower))));
-        if (max > 1.0) {
-            frontLeftPower /= max;
-            frontRightPower /= max;
-            backLeftPower /= max;
-            backRightPower /= max;
+        // Apply field-centric transformation if enabled
+        if (fieldCentricMode && imu != null) {
+            double cos = Math.cos(robotHeading);
+            double sin = Math.sin(robotHeading);
+            
+            double fieldX = x * cos - y * sin;
+            double fieldY = x * sin + y * cos;
+            
+            x = fieldX;
+            y = fieldY;
         }
 
-        // Set motor powers
-        frontLeft.setPower(frontLeftPower);
-        frontRight.setPower(frontRightPower);
-        backLeft.setPower(backLeftPower);
-        backRight.setPower(backRightPower);
+        // Calculate mecanum drive motor powers
+        double frontLeftPower = y + x + rotation;
+        double frontRightPower = y - x - rotation;
+        double backLeftPower = y - x + rotation;
+        double backRightPower = y + x - rotation;
 
-        // Telemetry
-        telemetry.addData("Heading (deg)", Math.toDegrees(robotHeading));
-        telemetry.addData("FL", frontLeftPower);
-        telemetry.addData("FR", frontRightPower);
-        telemetry.addData("BL", backLeftPower);
-        telemetry.addData("BR", backRightPower);
+        return new MotorPowers(frontLeftPower, frontRightPower, backLeftPower, backRightPower);
+    }
+
+    private void setMotorPowers(MotorPowers powers) {
+        frontLeft.setPower(powers.frontLeft);
+        frontRight.setPower(powers.frontRight);
+        backLeft.setPower(powers.backLeft);
+        backRight.setPower(powers.backRight);
+    }
+
+    private void updateTelemetry(DriveInputs inputs, MotorPowers powers, double deltaTime) {
+        telemetry.addData("=== DRIVE STATUS ===", "");
+        telemetry.addData("Field Centric", fieldCentricMode ? "ON" : "OFF");
+        telemetry.addData("Precision Mode", precisionMode ? "ON" : "OFF");
+        telemetry.addData("Heading (deg)", "%.1f", Math.toDegrees(robotHeading));
+        
+        telemetry.addData("=== INPUTS ===", "");
+        telemetry.addData("X", "%.2f", inputs.x);
+        telemetry.addData("Y", "%.2f", inputs.y);
+        telemetry.addData("Rotation", "%.2f", inputs.rotation);
+        
+        telemetry.addData("=== MOTOR POWERS ===", "");
+        telemetry.addData("FL", "%.2f", powers.frontLeft);
+        telemetry.addData("FR", "%.2f", powers.frontRight);
+        telemetry.addData("BL", "%.2f", powers.backLeft);
+        telemetry.addData("BR", "%.2f", powers.backRight);
+        
+        telemetry.addData("=== PERFORMANCE ===", "");
+        telemetry.addData("Loop Time (ms)", "%.1f", deltaTime * 1000);
+        telemetry.addData("Loop Rate (Hz)", "%.1f", 1.0 / deltaTime);
+        
+        telemetry.addData("=== CONTROLS ===", "");
+        telemetry.addData("DPad Up", "Toggle Field-Centric");
+        telemetry.addData("DPad Down", "Reset Heading");
+        telemetry.addData("Right Bumper", "Precision Mode");
+        
         telemetry.update();
+    }
+
+    // Helper classes for cleaner data handling
+    private static class DriveInputs {
+        public final double x, y, rotation;
+        
+        public DriveInputs(double x, double y, double rotation) {
+            this.x = x;
+            this.y = y;
+            this.rotation = rotation;
+        }
+    }
+
+    private static class MotorPowers {
+        public double frontLeft, frontRight, backLeft, backRight;
+        
+        public MotorPowers(double frontLeft, double frontRight, double backLeft, double backRight) {
+            this.frontLeft = frontLeft;
+            this.frontRight = frontRight;
+            this.backLeft = backLeft;
+            this.backRight = backRight;
+        }
+        
+        public void normalize() {
+            double max = Math.max(Math.abs(frontLeft), 
+                         Math.max(Math.abs(frontRight),
+                         Math.max(Math.abs(backLeft), Math.abs(backRight))));
+            
+            if (max > 1.0) {
+                frontLeft /= max;
+                frontRight /= max;
+                backLeft /= max;
+                backRight /= max;
+            }
+        }
+        
+        public void scale(double factor) {
+            normalize(); // Normalize first, then scale
+            frontLeft *= factor;
+            frontRight *= factor;
+            backLeft *= factor;
+            backRight *= factor;
+        }
     }
 }
