@@ -12,7 +12,7 @@ PedroPathing Related Files and links:<br/>
 - Official Discord: <https://discord.gg/2GfC4qBP5s><br/> 
 - Visualizer/Path Gen: <http://visualizer.pedropathing.com/><br/> 
 
-This is also website that is filled with numerous coding commands, so you don't have to mess around and write everything manually:<br/> 
+This is also a website that is filled with numerous coding commands, so you don't have to mess around and write everything manually:<br/> 
     
 - https://docs.dairy.foundation/introduction<br/>
 - https://nextftc.dev/<br/>
