@@ -19,4 +19,9 @@ This is also a website that is filled with numerous coding commands, so you don'
 
 Crucial Github repo to learn Java for FTC:<br/>
 
-- https://github.com/alan412/LearnJavaForFTC.git
+- https://github.com/alan412/LearnJavaForFTC.git<br/>
+
+Here are the links for the best engineering notebooks worldwide:<br/>
+- <https://portfolioperch.com/><br/>
+- <https://portfolios.hivemindrobotics.net/><br/>
+- <https://twcarobotics.com/engineering-notebook/><br/>
