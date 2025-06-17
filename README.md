@@ -25,3 +25,6 @@ Here are the links for the best engineering notebooks worldwide:<br/>
 - <https://portfolioperch.com/><br/>
 - <https://portfolios.hivemindrobotics.net/><br/>
 - <https://twcarobotics.com/engineering-notebook/><br/>
+
+FTC robot CAD links:<br/>
+- https://docs.google.com/spreadsheets/d/1MstjdQAAN6Mti5REt0sNttYp219STDO5u0D5Ai3Y1m4/edit?gid=0#gid=0
